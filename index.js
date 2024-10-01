@@ -126,8 +126,8 @@ bot.on('message', (msg) => {
                         reference: reference,
                         destination: `Оплата ${quantity} квитків на ${selectedEvent.name}`,
                     },
-                    redirectUrl: 'https://be0f-31-41-95-40.ngrok-free.app/success', // Ваш фактичний redirectUrl
-                    webHookUrl: 'https://be0f-31-41-95-40.ngrok-free.app/monobank', // Ваш фактичний webHookUrl
+                    redirectUrl: 'https://nndvizh.site/success',
+                    webHookUrl: 'https://nndvizh.site/monobank',
                 }
 
                 axios
@@ -180,6 +180,10 @@ bot.on('message', (msg) => {
 // Обробка вебхука від Monobank
 const app = express()
 app.use(express.json())
+
+app.get('/', (req, res) => {
+    res.send('here we go dlll!');
+});
 
 app.post('/monobank', (req, res) => {
     const data = req.body
