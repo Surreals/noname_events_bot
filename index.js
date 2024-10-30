@@ -324,7 +324,9 @@ bot.on('message', (msg) => {
 
                 bot.sendMessage(chatId, 'Після здійснення оплати, натисніть "✅ Я оплатив", щоб отримати квитки.', {
                     reply_markup: {
-                        keyboard: [[{ text: '✅ Я оплатив' }]],
+                        keyboard: [
+                            [{ text: '✅ Я оплатив' }, { text: '❌ Скасувати' }],
+                        ],
                         resize_keyboard: true,
                         one_time_keyboard: true,
                     },
@@ -343,9 +345,8 @@ bot.on('message', (msg) => {
             bot.sendMessage(chatId, '❗️ Будь ласка, оберіть спосіб оплати зі списку.')
         }
     } else if (userState.state === 'waiting_for_payment_confirmation') {
+        const orderInfo = userState.orderInfo
         if (text === '✅ Я оплатив') {
-            const orderInfo = userState.orderInfo
-
             checkJarPayment(orderInfo.totalPrice, orderInfo.jar, chatId).then((paymentConfirmed) => {
                 if (paymentConfirmed) {
                     const selectedEvent = events.find((event) => event.id === orderInfo.eventId)
@@ -389,12 +390,14 @@ bot.on('message', (msg) => {
 
                     userStates[chatId] = { state: 'main_menu' }
                     saveData(userStatesFilePath, userStates)
-                    delete orders[reference]
+                    delete orders[orderInfo.reference]
                     saveData(ordersFilePath, orders)
                 } else {
                     bot.sendMessage(chatId, '❗️ Оплату не підтверджено. Будь ласка, переконайтеся, що ви здійснили оплату, та спробуйте знову.', {
                         reply_markup: {
-                            keyboard: [[{ text: '✅ Я оплатив' }]],
+                            keyboard: [
+                                [{ text: '✅ Я оплатив' }, { text: '❌ Скасувати' }],
+                            ],
                             resize_keyboard: true,
                             one_time_keyboard: true,
                         },
@@ -404,10 +407,30 @@ bot.on('message', (msg) => {
                 logger.error(`Помилка при перевірці оплати: ${error}`)
                 bot.sendMessage(chatId, '❗️ Сталася помилка при перевірці оплати. Спробуйте пізніше.')
             })
-        } else {
-            bot.sendMessage(chatId, '❗️ Будь ласка, натисніть "✅ Я оплатив" після здійснення оплати.', {
+        } else if (text === '❌ Скасувати') {
+            // Звільняємо банку
+            releaseJar(orderInfo.jar.id)
+
+            // Видаляємо замовлення
+            delete orders[orderInfo.reference]
+            saveData(ordersFilePath, orders)
+
+            bot.sendMessage(chatId, '❌ Ваше замовлення було скасовано.', {
                 reply_markup: {
-                    keyboard: [[{ text: '✅ Я оплатив' }]],
+                    keyboard: [[{ text: '🎫 Доступні івенти' }], [{ text: 'ℹ️ Допомога' }]],
+                    resize_keyboard: true,
+                    one_time_keyboard: false,
+                },
+            })
+
+            userStates[chatId] = { state: 'main_menu' }
+            saveData(userStatesFilePath, userStates)
+        } else {
+            bot.sendMessage(chatId, '❗️ Будь ласка, оберіть опцію з меню.', {
+                reply_markup: {
+                    keyboard: [
+                        [{ text: '✅ Я оплатив' }, { text: '❌ Скасувати' }],
+                    ],
                     resize_keyboard: true,
                     one_time_keyboard: true,
                 },
@@ -523,14 +546,16 @@ async function getJarAmount(jar) {
 
         const data = response.data
 
-        if (data) {
-            return parseFloat(data.jarAmount || 0)
+        if (data && data.jarAmount !== undefined) {
+            return parseFloat(data.jarAmount)
         } else {
-            throw new Error('jarAmount не знайдено у відповіді')
+            // Якщо jarAmount не повертається, вважаємо його рівним 0
+            return 0
         }
     } catch (error) {
         logger.error(`Помилка при отриманні балансу банки: ${error}`)
-        throw error
+        // У випадку помилки, вважаємо баланс рівним 0
+        return 0
     }
 }
 
