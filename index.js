@@ -417,8 +417,8 @@ async function getJarAmount(jar) {
 
         const data = response.data
 
-        if (data && data.jarAmount !== undefined) {
-            return parseFloat(data.jarAmount)
+        if (data) {
+            return parseFloat(data.jarAmount || 0)
         } else {
             throw new Error('jarAmount не знайдено у відповіді')
         }
