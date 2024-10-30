@@ -35,6 +35,7 @@ const events = [
 // Шляхи до файлів
 const ordersFilePath = path.join(__dirname, 'orders.json')
 const userStatesFilePath = path.join(__dirname, 'userStates.json')
+const jarsFilePath = path.join(__dirname, 'jars.json')
 
 // Функція для завантаження даних з файлу
 function loadData(filePath) {
@@ -64,31 +65,39 @@ function saveData(filePath, data) {
 let orders = loadData(ordersFilePath)
 let userStates = loadData(userStatesFilePath)
 
+// Масив банок з їх параметрами та станом
+let jars = loadData(jarsFilePath)
+if (Object.keys(jars).length === 0) {
+    // Ініціалізуємо банки, якщо файл порожній
+    jars = {
+        1: {
+            id: 1,
+            Pc: "BJR6mYIOGCZLbsfKoLtngOGVPTYJMPoxYAxipw4LfywhDJjJZGSuxfc6g6q/8dxzbEHM8ygdEMEyev30jYE/GA4=",
+            c: "hello",
+            clientId: "AB3wzETu3o",
+            referer: "",
+            url: "https://send.monobank.ua/jar/AB3wzETu3o",
+            isReserved: false,
+            reservedBy: null,
+            reservedAt: null,
+        },
+        2: {
+            id: 2,
+            Pc: "BAvCNDz9W4AILfiH85PcwtlgXqJAvtpnTRFX56Qu3kbl0WVgH+vYsIoSxOYP1avBd1CyiYibY/X9hCwZj35B0Mo=",
+            c: "hello",
+            clientId: "SzjFuD6UW",
+            referer: "",
+            url: "https://send.monobank.ua/jar/SzjFuD6UW",
+            isReserved: false,
+            reservedBy: null,
+            reservedAt: null,
+        },
+    }
+    saveData(jarsFilePath, jars)
+}
+
 // Змінна для зберігання попереднього балансу банок
 let previousJarAmounts = {}
-
-// Масив банок з їх параметрами
-const jars = [
-    {
-        id: 1,
-        Pc: "BJR6mYIOGCZLbsfKoLtngOGVPTYJMPoxYAxipw4LfywhDJjJZGSuxfc6g6q/8dxzbEHM8ygdEMEyev30jYE/GA4=",
-        c: "hello",
-        clientId: "AB3wzETu3o",
-        referer: "",
-        url: "https://send.monobank.ua/jar/AB3wzETu3o",
-    },
-    {
-        id: 2,
-        Pc: "BAvCNDz9W4AILfiH85PcwtlgXqJAvtpnTRFX56Qu3kbl0WVgH+vYsIoSxOYP1avBd1CyiYibY/X9hCwZj35B0Mo=",
-        c: "hello",
-        clientId: "SzjFuD6UW",
-        referer: "",
-        url: "https://send.monobank.ua/jar/SzjFuD6UW",
-    },
-]
-
-// Індекс для чергування банок
-let jarIndex = 0
 
 // Обробка команди /start
 bot.onText(/\/start/, (msg) => {
@@ -178,7 +187,7 @@ bot.on('message', (msg) => {
             userState.quantity = quantity
 
             const paymentMethodButtons = [
-                [{ text: '💳 Прямий платіж' }],
+                // [{ text: '💳 Прямий платіж' }],
                 [{ text: '💰 Оплата на банку' }]
             ]
 
@@ -213,6 +222,7 @@ bot.on('message', (msg) => {
                     chatId: chatId,
                     eventId: selectedEvent.id,
                     quantity: quantity,
+                    createdAt: Date.now(),
                 }
                 saveData(ordersFilePath, orders)
 
@@ -271,9 +281,17 @@ bot.on('message', (msg) => {
 
             const reference = `jar_${selectedEvent.id}_${chatId}_${Date.now()}`
 
+            // Очищаємо старі бронювання перед призначенням банки
+            clearOldReservations()
+
             // Призначаємо банку користувачу
-            const assignedJar = jars[jarIndex % jars.length]
-            jarIndex++
+            const assignedJar = assignJarToUser(chatId)
+            if (!assignedJar) {
+                bot.sendMessage(chatId, '❗️ Наразі всі банки зайняті. Спробуйте пізніше.')
+                userStates[chatId] = { state: 'main_menu' }
+                saveData(userStatesFilePath, userStates)
+                return
+            }
 
             userState.orderInfo = {
                 chatId: chatId,
@@ -283,6 +301,7 @@ bot.on('message', (msg) => {
                 reference: reference,
                 paymentConfirmed: false,
                 jar: assignedJar, // Зберігаємо параметри банки
+                createdAt: Date.now(),
             }
 
             orders[reference] = userState.orderInfo
@@ -365,6 +384,9 @@ bot.on('message', (msg) => {
                         },
                     })
 
+                    // Звільняємо банку
+                    releaseJar(orderInfo.jar.id)
+
                     userStates[chatId] = { state: 'main_menu' }
                     saveData(userStatesFilePath, userStates)
                     delete orders[reference]
@@ -400,6 +422,90 @@ bot.on('message', (msg) => {
         // Інші випадки або невідомі команди
     }
 })
+
+// Функція для призначення банки користувачу
+function assignJarToUser(chatId) {
+    // Очищаємо старі бронювання
+    clearOldReservations()
+
+    // Знаходимо вільну банку
+    let freeJar = null
+    for (const jarId in jars) {
+        const jar = jars[jarId]
+        if (!jar.isReserved) {
+            freeJar = jar
+            break
+        }
+    }
+
+    // Якщо немає вільних банок, знаходимо банку з найстарішим резервуванням
+    if (!freeJar) {
+        let oldestJar = null
+        let oldestTime = Date.now()
+        for (const jarId in jars) {
+            const jar = jars[jarId]
+            if (jar.reservedAt && jar.reservedAt < oldestTime) {
+                oldestTime = jar.reservedAt
+                oldestJar = jar
+            }
+        }
+        if (oldestJar) {
+            // Перезаписуємо резервування
+            freeJar = oldestJar
+            logger.info(`Банка ${freeJar.id} була перезарезервована для чату ${chatId}`)
+        } else {
+            // Немає доступних банок
+            return null
+        }
+    }
+
+    // Резервуємо банку за користувачем
+    freeJar.isReserved = true
+    freeJar.reservedBy = chatId
+    freeJar.reservedAt = Date.now()
+    saveData(jarsFilePath, jars)
+
+    return freeJar
+}
+
+// Функція для звільнення банки
+function releaseJar(jarId) {
+    if (jars[jarId]) {
+        jars[jarId].isReserved = false
+        jars[jarId].reservedBy = null
+        jars[jarId].reservedAt = null
+        saveData(jarsFilePath, jars)
+        logger.info(`Банка ${jarId} була звільнена`)
+    }
+}
+
+// Функція для очищення старих бронювань
+function clearOldReservations() {
+    const now = Date.now()
+    const reservationTimeout = 12 * 60 * 60 * 1000 // 12 годин в мілісекундах
+
+    for (const jarId in jars) {
+        const jar = jars[jarId]
+        if (jar.isReserved && jar.reservedAt && now - jar.reservedAt > reservationTimeout) {
+            logger.info(`Банка ${jarId} була звільнена через закінчення часу резервування`)
+            releaseJar(jarId)
+        }
+    }
+
+    // Також очищаємо старі замовлення
+    for (const reference in orders) {
+        const order = orders[reference]
+        if (order.createdAt && now - order.createdAt > reservationTimeout) {
+            logger.info(`Замовлення ${reference} було видалено через закінчення часу очікування`)
+            // Звільняємо банку, якщо потрібно
+            if (order.jar && order.jar.id) {
+                releaseJar(order.jar.id)
+            }
+            delete orders[reference]
+            saveData(ordersFilePath, orders)
+        }
+    }
+}
 
 // Функція для отримання балансу банки
 async function getJarAmount(jar) {
@@ -448,6 +554,11 @@ async function checkJarPayment(expectedAmount, jar, chatId) {
         throw error
     }
 }
+
+// Періодичне очищення старих замовлень та бронювань (кожні 10 хвилин)
+setInterval(() => {
+    clearOldReservations()
+}, 10 * 60 * 1000) // 10 хвилин
 
 // Обробка вебхука від Monobank для прямого платежу
 const app = express()
