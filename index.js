@@ -64,8 +64,31 @@ function saveData(filePath, data) {
 let orders = loadData(ordersFilePath)
 let userStates = loadData(userStatesFilePath)
 
-// Змінна для зберігання попереднього балансу банки
-let previousJarAmount = 0
+// Змінна для зберігання попереднього балансу банок
+let previousJarAmounts = {}
+
+// Масив банок з їх параметрами
+const jars = [
+    {
+        id: 1,
+        Pc: "BJR6mYIOGCZLbsfKoLtngOGVPTYJMPoxYAxipw4LfywhDJjJZGSuxfc6g6q/8dxzbEHM8ygdEMEyev30jYE/GA4=",
+        c: "hello",
+        clientId: "AB3wzETu3o",
+        referer: "",
+        url: "https://send.monobank.ua/jar/AB3wzETu3o",
+    },
+    {
+        id: 2,
+        Pc: "BAvCNDz9W4AILfiH85PcwtlgXqJAvtpnTRFX56Qu3kbl0WVgH+vYsIoSxOYP1avBd1CyiYibY/X9hCwZj35B0Mo=",
+        c: "hello",
+        clientId: "SzjFuD6UW",
+        referer: "",
+        url: "https://send.monobank.ua/jar/SzjFuD6UW",
+    },
+]
+
+// Індекс для чергування банок
+let jarIndex = 0
 
 // Обробка команди /start
 bot.onText(/\/start/, (msg) => {
@@ -247,6 +270,11 @@ bot.on('message', (msg) => {
             const totalPriceGrn = totalPrice / 100
 
             const reference = `jar_${selectedEvent.id}_${chatId}_${Date.now()}`
+
+            // Призначаємо банку користувачу
+            const assignedJar = jars[jarIndex % jars.length]
+            jarIndex++
+
             userState.orderInfo = {
                 chatId: chatId,
                 eventId: selectedEvent.id,
@@ -254,17 +282,19 @@ bot.on('message', (msg) => {
                 totalPrice: totalPriceGrn,
                 reference: reference,
                 paymentConfirmed: false,
+                jar: assignedJar, // Зберігаємо параметри банки
             }
 
             orders[reference] = userState.orderInfo
             saveData(ordersFilePath, orders)
 
-            getJarAmount().then((amount) => {
-                previousJarAmount = amount
+            // Отримуємо поточний баланс банки користувача
+            getJarAmount(assignedJar).then((amount) => {
+                previousJarAmounts[chatId] = amount
 
                 bot.sendMessage(
                     chatId,
-                    `Для оплати ${quantity} квитків на *${selectedEvent.name}* на суму ${totalPriceGrn} грн перейдіть за посиланням:\nhttps://send.monobank.ua/jar/AB3wzETu3o`,
+                    `Для оплати ${quantity} квитків на *${selectedEvent.name}* на суму ${totalPriceGrn} грн перейдіть за посиланням:\n${assignedJar.url}`,
                     {
                         parse_mode: 'Markdown',
                         reply_markup: {
@@ -297,7 +327,7 @@ bot.on('message', (msg) => {
         if (text === '✅ Я оплатив') {
             const orderInfo = userState.orderInfo
 
-            checkJarPayment(orderInfo.totalPrice).then((paymentConfirmed) => {
+            checkJarPayment(orderInfo.totalPrice, orderInfo.jar, chatId).then((paymentConfirmed) => {
                 if (paymentConfirmed) {
                     const selectedEvent = events.find((event) => event.id === orderInfo.eventId)
                     const quantity = orderInfo.quantity
@@ -372,13 +402,13 @@ bot.on('message', (msg) => {
 })
 
 // Функція для отримання балансу банки
-async function getJarAmount() {
+async function getJarAmount(jar) {
     try {
         const response = await axios.post('https://send.monobank.ua/api/handler', {
-            Pc: "BJR6mYIOGCZLbsfKoLtngOGVPTYJMPoxYAxipw4LfywhDJjJZGSuxfc6g6q/8dxzbEHM8ygdEMEyev30jYE/GA4=",
-            c: "hello",
-            clientId: "AB3wzETu3o",
-            referer: ""
+            Pc: jar.Pc,
+            c: jar.c,
+            clientId: jar.clientId,
+            referer: jar.referer
         }, {
             headers: {
                 'Content-Type': 'application/json'
@@ -399,15 +429,16 @@ async function getJarAmount() {
 }
 
 // Функція для перевірки оплати
-async function checkJarPayment(expectedAmount) {
+async function checkJarPayment(expectedAmount, jar, chatId) {
     try {
-        const currentAmount = await getJarAmount()
-        const amountDifference = currentAmount - previousJarAmount
+        const currentAmount = await getJarAmount(jar)
+        const previousAmount = previousJarAmounts[chatId] || 0
+        const amountDifference = currentAmount - previousAmount
 
-        logger.info(`Попередній баланс: ${previousJarAmount}, поточний баланс: ${currentAmount}, різниця: ${amountDifference}`)
+        logger.info(`Попередній баланс для чату ${chatId}: ${previousAmount}, поточний баланс: ${currentAmount}, різниця: ${amountDifference}`)
 
         if (amountDifference >= expectedAmount) {
-            previousJarAmount = currentAmount
+            previousJarAmounts[chatId] = currentAmount
             return true
         } else {
             return false
